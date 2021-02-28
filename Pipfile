@@ -1,0 +1,19 @@
+[[source]]
+url = "https://pypi.org/simple"
+name = "pypi"
+verify_ssl = true
+
+[packages]
+django = "*"
+django-open-humans = "*"
+django-heroku = "*"
+gunicorn = "*"
+celery = "*"
+redis = "*"
+pandas = "*"
+requests-oauthlib = "*"
+
+[requires]
+python_version = "3.8"
+
+[dev-packages]

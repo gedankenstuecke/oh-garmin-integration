@@ -1,0 +1,9 @@
+staticfiles/*
+.env
+db.sqlite3
+.DS_Store
+data_cleanup
+tmp/
+.idea
+Health_REST_API_Specification*
+__pycache__/
