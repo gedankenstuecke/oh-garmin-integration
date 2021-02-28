@@ -16,7 +16,7 @@ from openhumans.models import OpenHumansMember
 
 from .garmin_health import GarminHealth
 from .models import GarminMember
-from .tasks import handle_backfill, handle_dailies
+from .tasks import handle_backfill, handle_summaries
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,7 +91,6 @@ def complete_garmin(request, resource_owner_secret):
 
 
 def authorize_garmin(request):
-    print(request.user.openhumansmember)
     garmin = GarminHealth(settings.GARMIN_KEY, settings.GARMIN_SECRET)
     # oauth1 leg 1
     garmin.fetch_oauth_token()
@@ -130,11 +129,7 @@ def garmin_user_permissions_change(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_body_composition(request):
-    tmp_file = f"/tmp/garmin_body_composition_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_body_composition to {tmp_file}")
+    handle_summary_delayed(request.body, 'bodyComps', "body-composition")
 
     return HttpResponse(status=200)
 
@@ -142,14 +137,7 @@ def garmin_body_composition(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_dailies(request):
-    tmp_file = f"/tmp/garmin_dailies_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_dailies to {tmp_file}")
-
-    # TODO: call async
-    handle_dailies(json.loads(request.body))
+    handle_summary_delayed(request.body, 'dailies', "dailies", ['activityType'])  # We remove activityType to avoid confusion. It's a legacy field that always has the value 'WALKING'
 
     return HttpResponse(status=200)
 
@@ -157,11 +145,7 @@ def garmin_dailies(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_epochs(request):
-    tmp_file = f"/tmp/garmin_epochs_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_epochs to {tmp_file}")
+    handle_summary_delayed(request.body, 'epochs', "epochs")
 
     return HttpResponse(status=200)
 
@@ -169,11 +153,7 @@ def garmin_epochs(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_pulse_ox(request):
-    tmp_file = f"/tmp/garmin_pulse_ox_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_pulse_ox to {tmp_file}")
+    handle_summary_delayed(request.body, 'pulseox', "pulse-ox")
 
     return HttpResponse(status=200)
 
@@ -181,11 +161,7 @@ def garmin_pulse_ox(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_respiration(request):
-    tmp_file = f"/tmp/garmin_respiration_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_respiration to {tmp_file}")
+    handle_summary_delayed(request.body, 'allDayRespiration', "respiration")
 
     return HttpResponse(status=200)
 
@@ -193,11 +169,7 @@ def garmin_respiration(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_sleeps(request):
-    tmp_file = f"/tmp/garmin_sleeps_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_sleeps to {tmp_file}")
+    handle_summary_delayed(request.body, 'sleeps', "sleep")
 
     return HttpResponse(status=200)
 
@@ -205,11 +177,7 @@ def garmin_sleeps(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_stress(request):
-    tmp_file = f"/tmp/garmin_stress_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_stress to {tmp_file}")
+    handle_summary_delayed(request.body, 'stressDetails', "stress")
 
     return HttpResponse(status=200)
 
@@ -217,11 +185,7 @@ def garmin_stress(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_third_party_dailies(request):
-    tmp_file = f"/tmp/garmin_third_party_dailies_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_third_party_dailies to {tmp_file}")
+    handle_summary_delayed(request.body, 'thirdPartyDetails', "third-party")  # I (Koen) could not test this since I don't have this data... TODO!
 
     return HttpResponse(status=200)
 
@@ -229,10 +193,12 @@ def garmin_third_party_dailies(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_user_metrics(request):
-    tmp_file = f"/tmp/garmin_user_metrics_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_user_metrics to {tmp_file}")
+    handle_summary_delayed(request.body, 'userMetrics', "user-metrics")
 
     return HttpResponse(status=200)
+
+
+def handle_summary_delayed(body, summaries_name, file_name, fields_to_remove=None):
+    body = body.decode('utf-8')
+    _LOGGER.info(f"Performing delayed handling of summaries {file_name} ({len(body)} chars)")
+    handle_summaries.delay(body, summaries_name, file_name, fields_to_remove)

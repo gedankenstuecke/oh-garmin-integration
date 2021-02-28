@@ -1,31 +1,21 @@
-from datetime import datetime, timedelta
+import json
+import logging
+import sys
 import time
-
-from .models import GarminMember
-from ohapi import api
-
-from .helpers import write_jsonfile_to_tmp_dir, download_to_json, unix_time_seconds
+import traceback
+from datetime import datetime, timedelta, timezone
 
 from celery.decorators import task
-from collections import defaultdict
-from requests_oauthlib import OAuth1Session
 from django.conf import settings
+from django.utils.timezone import make_aware
+from ohapi import api
+from requests_oauthlib import OAuth1Session
 
-MAX_FILE_BYTES = 256000000  # 256 MB
-MIN_GARMIN_YEAR = 2015  # that's when the smart watches with tracking capabilities came out
-SECONDS_PER_BACKFILL = 7776000  # Maximum allowed by the API
-SLEEP_BETWEEN_BACKFILL_CALLS_SECS = 60
+from .consts import BACKFILL_SECONDS, BACKFILL_MIN_YEAR, GARMIN_BACKFILL_URLS, BACKFILL_SLEEP_BETWEEN_CALLS
+from .helpers import unix_time_seconds, upload_summaries_for_month, group_summaries_per_user_and_per_month, get_oh_user_from_garmin_id, remove_unwanted_fields
+from .models import GarminMember
 
-backfill_urls = [
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/dailies',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/epochs',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/sleeps',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/bodyComps',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/stressDetails',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/userMetrics',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/pulseOx',
-    'https://healthapi.garmin.com/wellness-api/rest/backfill/respiration',
-]
+_LOGGER = logging.getLogger(__name__)
 
 
 @task
@@ -39,136 +29,63 @@ def handle_backfill(garmin_user_id):
     )
 
     end_date = datetime.utcnow()
-    start_date = end_date - timedelta(seconds=SECONDS_PER_BACKFILL)
+    start_date = end_date - timedelta(seconds=BACKFILL_SECONDS)
 
-    print(f"Executing backfill for user ${garmin_user_id}")
-    while start_date.year >= MIN_GARMIN_YEAR:
+    _LOGGER.info(f"Executing backfill for user ${get_oh_user_from_garmin_id(garmin_user_id)}")
+    while start_date.year >= BACKFILL_MIN_YEAR:
 
         start_epoch = unix_time_seconds(start_date)
         end_epoch = unix_time_seconds(end_date)
 
-        for url in backfill_urls:
+        for url in GARMIN_BACKFILL_URLS:
             summary_url = f"{url}?summaryStartTimeInSeconds={start_epoch}&summaryEndTimeInSeconds={end_epoch}"
             res = oauth.get(url=summary_url)
             if res.status_code != 202:
-                raise Exception(f"Invalid backfill for url {summary_url}, got response response: {res.content},{res.status_code}")
+                raise Exception(f"Invalid response for backfill url {summary_url}, got response response: {res.content},{res.status_code}")
             else:
-                print(f"Called async backfill {summary_url}")
-        time.sleep(SLEEP_BETWEEN_BACKFILL_CALLS_SECS)
+                _LOGGER.info(f"Called backfill {summary_url}")
+
+        time.sleep(BACKFILL_SLEEP_BETWEEN_CALLS)
         end_date = start_date
-        start_date = start_date - timedelta(seconds=SECONDS_PER_BACKFILL)
-    return res
+        start_date = start_date - timedelta(seconds=BACKFILL_SECONDS)
 
 
 @task
-def handle_dailies(json):
-    user_maps = dailies_to_user_maps(json)
+def handle_summaries(request_body, summary_name, file_name, fields_to_remove=None):
+    print(f"Handling summaries {summary_name}")
+    try:
+        summaries = extract_summaries(request_body, summary_name)
 
-    for user_id in user_maps:
-        # get existing file and merge
-        user_map = user_maps[user_id]
-        existing_user_map, existing_file_id = get_existing_data(user_id)
-        print('existing data')
-        print(len(existing_user_map.get('dailies')))
-        print('new data')
-        print(len(user_map['dailies']))
-        if existing_user_map:
-            user_map = merge_user_maps(user_map, existing_user_map)
-        print('target data')
-        print(len(user_map['dailies']))
-        upload_user_dailies(user_id, user_map, existing_file_id)
+        grouped_summaries = group_summaries_per_user_and_per_month(summaries)
+        print("Grouped summaries")
+        for garmin_user_id, monthly_summaries in grouped_summaries.items():
+            oh_user = get_oh_user_from_garmin_id(garmin_user_id)
+            print("Got user")
+            oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
+            print("Got user data")
+            for month, summaries in monthly_summaries.items():
+                remove_unwanted_fields(summaries, fields_to_remove)
+                print(f"Uploading summaries for month {month}")
+                upload_summaries_for_month(month, oh_user, oh_user_data, summaries, file_name)
+                print(f"Uploaded summaries for month {month}")
 
-
-def get_django_user_id_from_garmin_id(garmin_user_id):
-    oh_user = get_oh_user_from_garmin_id(garmin_user_id)
-    return oh_user.user.id
-
-
-def get_existing_data(garmin_user_id):
-    oh_user = get_oh_user_from_garmin_id(garmin_user_id)
-    member = api.exchange_oauth2_member(oh_user.get_access_token())
-    for dfile in member['data']:
-        if 'Garmin' in dfile['metadata']['tags']:
-            download_url = dfile['download_url']
-            return download_to_json(download_url), dfile['id']
-    return {'dailies': []}, None
+            oh_user.garmin_member.last_updated = make_aware(datetime.utcnow(), timezone=timezone.utc)
+            oh_user.garmin_member.save()
+            print(f"Saved member")
+        print(f"Handled summaries {len(summaries)} summaries {summary_name}")
+    except:
+        e = sys.exc_info()[0]
+        # TODO: don't log personal user data
+        _LOGGER.error(f"Failed to handle summaries JSON {summary_name} {request_body} {e}")
+        traceback.print_exc()
 
 
-def create_metadata():
-    return {
-        'description':
-            'Garmin dailies heart rate data.',
-        'tags': ['Garmin', 'heart rate'],
-        'updated_at': str(datetime.utcnow()),
-    }
-
-
-def upload_user_dailies(garmin_user_id, user_map, existing_file_id):
-    fn = write_jsonfile_to_tmp_dir('garmin-dailies.json', user_map)
-    oh_user = get_oh_user_from_garmin_id(garmin_user_id)
-    api.upload_aws(fn, create_metadata(),
-                   oh_user.get_access_token(),
-                   project_member_id=oh_user.oh_id,
-                   max_bytes=MAX_FILE_BYTES)
-
-    oh_user.garmin_member.last_updated = datetime.utcnow()
-    oh_user.garmin_member.save()
-    if existing_file_id:
-        api.delete_file(oh_user.get_access_token(), file_id=existing_file_id)
-
-
-def earliest_date(user_map):
-    min_ts = None
-    for summary in user_map['dailies']:
-        start_ts = summary['startTimeInSeconds']
-        if min_ts is None or start_ts < min_ts:
-            min_ts = start_ts
-
-    return datetime.utcfromtimestamp(min_ts)
-
-
-def get_oh_user_from_garmin_id(garmin_user_id):
-    garmin_member = GarminMember.objects.get(userid=garmin_user_id)
-    return garmin_member.member
-
-
-def dailies_to_user_maps(data):
-    """
-
-    :param data:
-    :return: a dictionary of garmin user id to a dictionary {"dailies": lists of summaries for said user
-    """
-    res = defaultdict(lambda: {"dailies": []})
-
-    keys_to_store = ['averageHeartRateInBeatsPerMinute',
-                     'maxHeartRateInBeatsPerMinute',
-                     'minHeartRateInBeatsPerMinute',
-                     'timeOffsetHeartRateSamples',
-                     'startTimeOffsetInSeconds',
-                     'summaryId',
-                     'startTimeInSeconds',
-                     'calendarDate']
-
-    for user_dailies in data['dailies']:
-        userId = user_dailies['userId']
-        data_to_store = {}
-        for k in keys_to_store:
-            data_to_store[k] = user_dailies.get(k, None)
-        res[userId]['dailies'].append(data_to_store)
-
-    return res
-
-
-def merge_user_maps(um1, um2):
-    new_map = {"dailies": []}
-    seen_summary_ids = set()
-
-    for summary in um1['dailies'] + um2['dailies']:
-        if summary['summaryId'] in seen_summary_ids:
-            print("already seen {}".format(summary['summaryId']))
-            continue
-        else:
-            seen_summary_ids.add(summary['summaryId'])
-            new_map['dailies'].append(summary)
-
-    return new_map
+def extract_summaries(request_body, summary_name):
+    json_body = json.loads(request_body)
+    summaries = json_body[summary_name]
+    if not summaries:
+        raise Exception(f'Could not find summaries with name {summary_name}')
+    other_keys = [key for key in json_body.keys() if key != summary_name]
+    if len(other_keys) > 0:
+        logging.warning(f'Found ignored keys {other_keys} in summary file')
+    return summaries
