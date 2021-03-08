@@ -15,7 +15,8 @@ from django.views.decorators.http import require_http_methods
 from openhumans.models import OpenHumansMember
 
 from .garmin_health import GarminHealth
-from .models import GarminMember
+from .helpers import extract_summaries, remove_fields, group_summaries_per_user_and_per_month
+from .models import GarminMember, SummariesToProcess
 from .tasks import handle_backfill, handle_summaries
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ def complete_garmin(request, resource_owner_secret):
     # oauth1 leg 3
     garmin.complete_garmin(authorization_response, resource_owner_secret)
     access_token = garmin.uat
-    userid = garmin.api_id
+    garmin_user_id = garmin.api_id
 
     if hasattr(request.user.openhumansmember, 'garmin_member'):
         garmin_member = request.user.openhumansmember.garmin_member
@@ -77,9 +78,9 @@ def complete_garmin(request, resource_owner_secret):
 
     garmin_member.access_token = access_token
     garmin_member.access_token_secret = garmin.oauth.token.get('oauth_token_secret')
-    garmin_member.userid = userid
+    garmin_member.userid = garmin_user_id
     garmin_member.member = request.user.openhumansmember
-    handle_backfill.delay(userid)
+    handle_backfill.delay(garmin_user_id)
     garmin_member.save()
     if garmin_member:
         messages.info(request, "Your Garmin account has been connected.")
@@ -198,7 +199,18 @@ def garmin_user_metrics(request):
     return HttpResponse(status=200)
 
 
-def handle_summary_delayed(body, summaries_name, file_name, fields_to_remove=None):
+def handle_summary_delayed(body, summaries_name, file_name, fields_to_remove=[]):
     body = body.decode('utf-8')
-    _LOGGER.info(f"Performing delayed handling of summaries {file_name} ({len(body)} chars)")
-    handle_summaries.delay(body, summaries_name, file_name, fields_to_remove)
+    summaries = extract_summaries(body, summaries_name)
+    if fields_to_remove:
+        remove_fields(summaries, fields_to_remove)
+    grouped_summaries = group_summaries_per_user_and_per_month(summaries)
+    for garmin_user_id, monthly_summaries in grouped_summaries.items():
+        for year_month, summaries in monthly_summaries.items():
+            _LOGGER.info(f"Saving summaries {file_name} for user ${garmin_user_id} and month ${year_month} for further processing")
+            summaries_to_process = SummariesToProcess()
+            summaries_to_process.summaries_json = json.dumps(body)
+            summaries_to_process.garmin_user_id = garmin_user_id
+            summaries_to_process.year_month = year_month
+            summaries_to_process.save()
+            handle_summaries.delay(garmin_user_id, year_month, file_name)

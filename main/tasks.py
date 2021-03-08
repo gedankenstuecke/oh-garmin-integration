@@ -7,13 +7,14 @@ from datetime import datetime, timedelta, timezone
 
 from celery.decorators import task
 from django.conf import settings
+from django.db import transaction
 from django.utils.timezone import make_aware
 from ohapi import api
 from requests_oauthlib import OAuth1Session
 
 from .consts import BACKFILL_SECONDS, BACKFILL_MIN_YEAR, GARMIN_BACKFILL_URLS, BACKFILL_SLEEP_BETWEEN_CALLS
 from .helpers import unix_time_seconds, upload_summaries_for_month, group_summaries_per_user_and_per_month, get_oh_user_from_garmin_id, remove_unwanted_fields
-from .models import GarminMember
+from .models import GarminMember, SummariesToProcess
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ def handle_backfill(garmin_user_id):
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(seconds=BACKFILL_SECONDS)
 
-    _LOGGER.info(f"Executing backfill for user ${get_oh_user_from_garmin_id(garmin_user_id)}")
+    print(f"Executing backfill for user ${get_oh_user_from_garmin_id(garmin_user_id)}")
     while start_date.year >= BACKFILL_MIN_YEAR:
 
         start_epoch = unix_time_seconds(start_date)
@@ -43,7 +44,7 @@ def handle_backfill(garmin_user_id):
             if res.status_code != 202:
                 raise Exception(f"Invalid response for backfill url {summary_url}, got response response: {res.content},{res.status_code}")
             else:
-                _LOGGER.info(f"Called backfill {summary_url}")
+                print(f"Called backfill {summary_url}")
 
         time.sleep(BACKFILL_SLEEP_BETWEEN_CALLS)
         end_date = start_date
@@ -51,41 +52,35 @@ def handle_backfill(garmin_user_id):
 
 
 @task
-def handle_summaries(request_body, summary_name, file_name, fields_to_remove=None):
-    print(f"Handling summaries {summary_name}")
+@transaction.atomic
+def handle_summaries(garmin_user_id, year_month, file_name):
+    print(f"Handling summaries for garmin_user_id={garmin_user_id}, year_month={year_month}, file_name={file_name}")
     try:
-        summaries = extract_summaries(request_body, summary_name)
+        summaries_to_process = SummariesToProcess.objects.get(garmin_user_id__exact=garmin_user_id, year_month__exact=year_month)
+        if len(summaries_to_process) == 0:
+            print("Nothing to do")
+            return
 
-        grouped_summaries = group_summaries_per_user_and_per_month(summaries)
-        print("Grouped summaries")
-        for garmin_user_id, monthly_summaries in grouped_summaries.items():
-            oh_user = get_oh_user_from_garmin_id(garmin_user_id)
-            print("Got user")
-            oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
-            print("Got user data")
-            for month, summaries in monthly_summaries.items():
-                remove_unwanted_fields(summaries, fields_to_remove)
-                print(f"Uploading summaries for month {month}")
-                upload_summaries_for_month(month, oh_user, oh_user_data, summaries, file_name)
-                print(f"Uploaded summaries for month {month}")
+        summaries = []
+        for summaries_to_process in summaries_to_process:
+            summaries.append(json.loads(summaries_to_process.summaries_json))
 
-            oh_user.garmin_member.last_updated = make_aware(datetime.utcnow(), timezone=timezone.utc)
-            oh_user.garmin_member.save()
-            print(f"Saved member")
-        print(f"Handled summaries {len(summaries)} summaries {summary_name}")
+        oh_user = get_oh_user_from_garmin_id(garmin_user_id)
+        print("Got user")
+        oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
+        print("Got user data")
+        print(f"Uploading summaries for month {year_month}")
+        upload_summaries_for_month(year_month, oh_user, oh_user_data, summaries, file_name)
+        print(f"Uploaded summaries for month {year_month}")
+
+        oh_user.garmin_member.last_updated = make_aware(datetime.utcnow(), timezone=timezone.utc)
+        oh_user.garmin_member.save()
+        print(f"Saved member")
+        print(f"Handled summaries {len(summaries)} summaries {file_name}")
+
+        summaries_to_process.delete()
+
     except:
         e = sys.exc_info()[0]
-        # TODO: don't log personal user data
-        _LOGGER.error(f"Failed to handle summaries JSON {summary_name} {request_body} {e}")
+        _LOGGER.error(f"Failed to handle summaries JSON {file_name} {e}")
         traceback.print_exc()
-
-
-def extract_summaries(request_body, summary_name):
-    json_body = json.loads(request_body)
-    summaries = json_body[summary_name]
-    if not summaries:
-        raise Exception(f'Could not find summaries with name {summary_name}')
-    other_keys = [key for key in json_body.keys() if key != summary_name]
-    if len(other_keys) > 0:
-        logging.warning(f'Found ignored keys {other_keys} in summary file')
-    return summaries

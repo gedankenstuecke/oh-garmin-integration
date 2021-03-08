@@ -66,10 +66,8 @@ def upload_summaries_for_month(month, oh_user, oh_user_data, summaries, file_nam
     upload_summaries(oh_user, summaries, file_name, month, existing_file_id)
 
 
-def remove_unwanted_fields(summaries, fields_to_remove):
+def remove_unwanted_fields(summaries):
     remove_fields(summaries, ['userId', 'userAccessToken'])  # No need to store this data in every single summary
-    if fields_to_remove:
-        remove_fields(summaries, fields_to_remove)
 
 
 def remove_fields(summaries, fields_to_remove):
@@ -134,3 +132,15 @@ def group_summaries_per_user_and_per_month(summaries):
 
 def month_name(timestamp):
     return timestamp.strftime("%Y-%m")
+
+
+def extract_summaries(request_body, summary_name):
+    json_body = json.loads(request_body)
+    if summary_name not in json_body:
+        raise Exception(f'Could not find summaries with name {summary_name}')
+
+    summaries = json_body[summary_name]
+    other_keys = [key for key in json_body.keys() if key != summary_name]
+    if len(other_keys) > 0:
+        logging.warning(f'Found ignored keys {other_keys} in summary file')
+    return summaries
