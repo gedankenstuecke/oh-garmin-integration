@@ -53,34 +53,31 @@ def handle_backfill(garmin_user_id):
 
 @task
 @transaction.atomic
-def handle_summaries(garmin_user_id, year_month, file_name):
-    print(f"Handling summaries for garmin_user_id={garmin_user_id}, year_month={year_month}, file_name={file_name}")
+def handle_summaries(garmin_user_id, year_month, data_type):
+    print(f"Handling summaries for garmin_user_id={garmin_user_id}, year_month={year_month}, data_type={data_type}")
     try:
-        summaries_to_process = SummariesToProcess.objects.get(garmin_user_id__exact=garmin_user_id, year_month__exact=year_month)
+        summaries_to_process = SummariesToProcess.objects.filter(garmin_user_id__exact=garmin_user_id, year_month__exact=year_month, data_type=data_type)
         if len(summaries_to_process) == 0:
             print("Nothing to do")
             return
 
         summaries = []
         for summaries_to_process in summaries_to_process:
-            summaries.append(json.loads(summaries_to_process.summaries_json))
+            summaries += json.loads(summaries_to_process.summaries_json)
 
         oh_user = get_oh_user_from_garmin_id(garmin_user_id)
         print("Got user")
         oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
         print("Got user data")
         print(f"Uploading summaries for month {year_month}")
-        upload_summaries_for_month(year_month, oh_user, oh_user_data, summaries, file_name)
+        upload_summaries_for_month(year_month, oh_user, oh_user_data, summaries, data_type)
         print(f"Uploaded summaries for month {year_month}")
 
-        oh_user.garmin_member.last_updated = make_aware(datetime.utcnow(), timezone=timezone.utc)
-        oh_user.garmin_member.save()
-        print(f"Saved member")
-        print(f"Handled summaries {len(summaries)} summaries {file_name}")
+        print(f"Handled summaries {len(summaries)} summaries {data_type}")
 
         summaries_to_process.delete()
 
     except:
         e = sys.exc_info()[0]
-        _LOGGER.error(f"Failed to handle summaries JSON {file_name} {e}")
+        _LOGGER.error(f"Failed to handle summaries JSON {data_type} {e}")
         traceback.print_exc()

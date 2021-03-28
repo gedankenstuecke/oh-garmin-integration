@@ -21,3 +21,4 @@ class SummariesToProcess(models.Model):
     summaries_json = models.TextField()
     garmin_user_id = models.CharField(max_length=255, null=False)
     year_month = models.CharField(max_length=255, null=False)
+    data_type = models.CharField(max_length=255, null=False)

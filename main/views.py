@@ -14,12 +14,15 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from openhumans.models import OpenHumansMember
 
+from .consts import GARMIN_HEALTH_API_TAG
 from .garmin_health import GarminHealth
-from .helpers import extract_summaries, remove_fields, group_summaries_per_user_and_per_month
+from .helpers import extract_summaries, remove_fields, group_summaries_per_user_and_per_month, get_oh_user_from_garmin_id
 from .models import GarminMember, SummariesToProcess
 from .tasks import handle_backfill, handle_summaries
 
 _LOGGER = logging.getLogger(__name__)
+
+from ohapi import api
 
 
 def index(request):
@@ -42,6 +45,7 @@ def index(request):
         # print(f"queueing backfill ${request.user.openhumansmember.garmin_member.userid}")
         # handle_backfill(request.user.openhumansmember.garmin_member.userid)
     # print(current_app.tasks.keys())
+    # handle_summaries('4d866463-8368-41d0-8b8a-07595717ab91', '2021-02', 'user-metrics')
 
     return render(request, 'main/index.html', context=context)
 
@@ -199,7 +203,7 @@ def garmin_user_metrics(request):
     return HttpResponse(status=200)
 
 
-def handle_summary_delayed(body, summaries_name, file_name, fields_to_remove=[]):
+def handle_summary_delayed(body, summaries_name, data_type, fields_to_remove=[]):
     body = body.decode('utf-8')
     summaries = extract_summaries(body, summaries_name)
     if fields_to_remove:
@@ -207,10 +211,11 @@ def handle_summary_delayed(body, summaries_name, file_name, fields_to_remove=[])
     grouped_summaries = group_summaries_per_user_and_per_month(summaries)
     for garmin_user_id, monthly_summaries in grouped_summaries.items():
         for year_month, summaries in monthly_summaries.items():
-            _LOGGER.info(f"Saving summaries {file_name} for user ${garmin_user_id} and month ${year_month} for further processing")
+            _LOGGER.info(f"Saving summaries {data_type} for user {garmin_user_id} and month {year_month} for further processing")
             summaries_to_process = SummariesToProcess()
-            summaries_to_process.summaries_json = json.dumps(body)
+            summaries_to_process.summaries_json = json.dumps(summaries)
             summaries_to_process.garmin_user_id = garmin_user_id
             summaries_to_process.year_month = year_month
+            summaries_to_process.data_type = data_type
             summaries_to_process.save()
-            handle_summaries.delay(garmin_user_id, year_month, file_name)
+            handle_summaries.delay(garmin_user_id, year_month, data_type)
