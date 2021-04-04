@@ -3,36 +3,54 @@ import logging
 import sys
 import time
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from threading import Lock, Thread
 
-from celery.decorators import task
 from django.conf import settings
-from django.db import transaction
-from django.utils.timezone import make_aware
+from django.core.exceptions import ObjectDoesNotExist
 from ohapi import api
 from requests_oauthlib import OAuth1Session
 
+from oh_template.settings import NUM_OF_SUMMARY_UPLOAD_THREADS
 from .consts import BACKFILL_SECONDS, BACKFILL_MIN_YEAR, GARMIN_BACKFILL_URLS, BACKFILL_SLEEP_BETWEEN_CALLS
-from .helpers import unix_time_seconds, upload_summaries_for_month, group_summaries_per_user_and_per_month, get_oh_user_from_garmin_id, remove_unwanted_fields
+from .helpers import unix_time_seconds, merge_with_existing_and_upload, get_oh_user_from_garmin_id, group_summaries_per_user_and_per_month, extract_summaries, remove_fields, summaries_to_process_key
 from .models import GarminMember, SummariesToProcess
 
 _LOGGER = logging.getLogger(__name__)
 
+handle_summaries_lock = Lock()
+locked_summaries = []
 
-@task
-def handle_backfill(garmin_user_id):
-    garmin_member = GarminMember.objects.get(userid=garmin_user_id)
+
+def start_threads():
+    backfill_thread = Thread(target=handle_backfill)
+    backfill_thread.start()
+
+    for i in range(NUM_OF_SUMMARY_UPLOAD_THREADS):
+        thread = Thread(target=handle_summaries)
+        thread.start()
+
+
+def handle_backfill():
+    while True:
+        try:
+            garmin_member = GarminMember.objects.get(was_backfilled=False)
+            handle_backfill_for_member(garmin_member)
+        except ObjectDoesNotExist:
+            # Nothing to do
+            time.sleep(0.5)
+
+
+def handle_backfill_for_member(garmin_member):
     oauth = OAuth1Session(
         client_key=settings.GARMIN_KEY,
         client_secret=settings.GARMIN_SECRET,
         resource_owner_key=garmin_member.access_token,
         resource_owner_secret=garmin_member.access_token_secret
     )
-
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(seconds=BACKFILL_SECONDS)
-
-    print(f"Executing backfill for user ${get_oh_user_from_garmin_id(garmin_user_id)}")
+    _LOGGER.info(f"Executing backfill for user ${get_oh_user_from_garmin_id(garmin_member.userid)}")
     while start_date.year >= BACKFILL_MIN_YEAR:
 
         start_epoch = unix_time_seconds(start_date)
@@ -42,42 +60,88 @@ def handle_backfill(garmin_user_id):
             summary_url = f"{url}?summaryStartTimeInSeconds={start_epoch}&summaryEndTimeInSeconds={end_epoch}"
             res = oauth.get(url=summary_url)
             if res.status_code != 202:
-                raise Exception(f"Invalid response for backfill url {summary_url}, got response response: {res.content},{res.status_code}")
+                _LOGGER.error(f"Invalid response for backfill url {summary_url}, got response response: {res.content},{res.status_code}")
+                return
             else:
-                print(f"Called backfill {summary_url}")
+                _LOGGER.debug(f"Called backfill {summary_url}")
 
         time.sleep(BACKFILL_SLEEP_BETWEEN_CALLS)
         end_date = start_date
         start_date = start_date - timedelta(seconds=BACKFILL_SECONDS)
+    garmin_member.was_backfilled = True
+    garmin_member.save()
 
 
-@task
-@transaction.atomic
-def handle_summaries(garmin_user_id, year_month, data_type):
-    print(f"Handling summaries for garmin_user_id={garmin_user_id}, year_month={year_month}, data_type={data_type}")
+def handle_summaries():
+    while True:
+        not_locked_summaries = None
+        with handle_summaries_lock:
+            for summaries_to_process in SummariesToProcess.objects.all():
+                if summaries_to_process_key(summaries_to_process) not in locked_summaries:
+                    not_locked_summaries = summaries_to_process
+                    break
+
+            if not_locked_summaries is not None:
+                locked_summaries.append(summaries_to_process_key(not_locked_summaries))
+
+        if not_locked_summaries is not None:
+            try:
+                garmin_user_id = not_locked_summaries.garmin_user_id
+                file_name = not_locked_summaries.file_name
+                process_summaries_for_user_and_file(file_name, garmin_user_id)
+            finally:
+                locked_summaries.remove(summaries_to_process_key(not_locked_summaries))
+
+        else:
+            # Nothing to do
+            time.sleep(0.5)
+
+
+def process_summaries_for_user_and_file(file_name, garmin_user_id):
+    summaries_to_process_all = SummariesToProcess.objects.filter(garmin_user_id__exact=garmin_user_id, file_name__exact=file_name)
+    summaries = []
+    ids_to_delete = []
+    for summaries_to_process in summaries_to_process_all:
+        ids_to_delete.append(summaries_to_process.id)
+        summaries += json.loads(summaries_to_process.summaries_json)
+
     try:
-        summaries_to_process = SummariesToProcess.objects.filter(garmin_user_id__exact=garmin_user_id, year_month__exact=year_month, data_type=data_type)
-        if len(summaries_to_process) == 0:
-            print("Nothing to do")
-            return
-
-        summaries = []
-        for summaries_to_process in summaries_to_process:
-            summaries += json.loads(summaries_to_process.summaries_json)
-
         oh_user = get_oh_user_from_garmin_id(garmin_user_id)
-        print("Got user")
-        oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
-        print("Got user data")
-        print(f"Uploading summaries for month {year_month}")
-        upload_summaries_for_month(year_month, oh_user, oh_user_data, summaries, data_type)
-        print(f"Uploaded summaries for month {year_month}")
-
-        print(f"Handled summaries {len(summaries)} summaries {data_type}")
-
-        summaries_to_process.delete()
+        access_token = oh_user.get_access_token()
+        oh_user_data = api.exchange_oauth2_member(access_token)
+        merge_with_existing_and_upload(oh_user, oh_user_data, summaries, file_name)
+        SummariesToProcess.objects.filter(id__in=ids_to_delete).delete()
+        _LOGGER.info(f"Handling {len(summaries_to_process_all)} summaries for garmin_user_id={garmin_user_id}, file_name={file_name}")
 
     except:
         e = sys.exc_info()[0]
-        _LOGGER.error(f"Failed to handle summaries JSON {data_type} {e}")
+        _LOGGER.error(f"Failed to handle summaries JSON {file_name} {e}")
         traceback.print_exc()
+
+        # Reschedule handling
+        save_summaries_for_delayed_processing(file_name, garmin_user_id, summaries)
+
+
+def handle_summaries_delayed(body, summaries_name, data_type, fields_to_remove=None):
+    body = body.decode('utf-8')
+    summaries = extract_summaries(body, summaries_name)
+    if fields_to_remove is not None:
+        remove_fields(summaries, fields_to_remove)
+    schedule_delayed_handling_of_summaries(summaries, data_type)
+
+
+def schedule_delayed_handling_of_summaries(summaries, data_type):
+    grouped_summaries = group_summaries_per_user_and_per_month(summaries)
+    for garmin_user_id, monthly_summaries in grouped_summaries.items():
+        for year_month, summaries in monthly_summaries.items():
+            file_name = f"{data_type}-{year_month}"
+            save_summaries_for_delayed_processing(file_name, garmin_user_id, summaries)
+
+
+def save_summaries_for_delayed_processing(file_name, garmin_user_id, summaries):
+    _LOGGER.info(f"Saving summaries {file_name} for user {garmin_user_id} for further processing")
+    summaries_to_process = SummariesToProcess()
+    summaries_to_process.summaries_json = json.dumps(summaries)
+    summaries_to_process.garmin_user_id = garmin_user_id
+    summaries_to_process.file_name = file_name
+    summaries_to_process.save()

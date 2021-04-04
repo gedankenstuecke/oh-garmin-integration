@@ -246,7 +246,7 @@ class GarminHealth(object):
 
                 # if everything worked as expected
                 if resp.status_code == 200:
-                    print(resp.content)
+                    # print(resp.content)
                     if raw:
                         return resp
                     else:
@@ -301,6 +301,6 @@ class GarminHealth(object):
     def api_id(self):
         if self._api_id is None:
             data = self.query(API_USER_ID)
-            print(data)
+            # print(data)
             self._api_id = data.get('userId')
         return self._api_id

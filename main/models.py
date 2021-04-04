@@ -14,11 +14,11 @@ class GarminMember(models.Model):
     access_token_secret = models.CharField(max_length=512, null=True)
     last_updated = models.DateTimeField(null=True)
     has_health_export_permission = models.BooleanField(default=False)
+    was_backfilled = models.BooleanField(default=False)
 
 
 class SummariesToProcess(models.Model):
     id = models.IntegerField(primary_key=True, auto_created=True)
     summaries_json = models.TextField()
     garmin_user_id = models.CharField(max_length=255, null=False)
-    year_month = models.CharField(max_length=255, null=False)
-    data_type = models.CharField(max_length=255, null=False)
+    file_name = models.CharField(max_length=255, null=False)

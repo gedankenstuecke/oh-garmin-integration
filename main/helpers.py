@@ -33,11 +33,10 @@ def download_json_data(download_url):
     return json.loads(requests.get(download_url).content)
 
 
-def find_existing_data_file(oh_user_data, file_name, month_name):
+def find_existing_data_file(oh_user_data, file_name):
     for file in oh_user_data['data']:
-        _LOGGER.info(f"Got file {file}")
         tags = file['metadata']['tags']
-        if tags and GARMIN_HEALTH_API_TAG in tags and file_name in tags and month_name in tags:
+        if tags and GARMIN_HEALTH_API_TAG in tags and file_name in tags:
             return file
 
     return None  # Not found
@@ -54,16 +53,16 @@ def merge_summaries(new_summaries, old_summaries):
     return result
 
 
-def upload_summaries_for_month(month, oh_user, oh_user_data, summaries, file_name):
-    existing_file = find_existing_data_file(oh_user_data, file_name, month)
+def merge_with_existing_and_upload(oh_user, oh_user_data, summaries, file_name):
+    existing_file = find_existing_data_file(oh_user_data, file_name)
     if existing_file:
         download_url = existing_file['download_url']
         old_summaries = download_json_data(download_url)
         summaries = merge_summaries(summaries, old_summaries)
     existing_file_id = existing_file['id'] if existing_file else None
 
-    _LOGGER.info(f"Uploading {len(summaries)} summaries of type {file_name} for user {oh_user.oh_id} in month {month}")
-    upload_summaries(oh_user, summaries, file_name, month, existing_file_id)
+    _LOGGER.info(f"Uploading {len(summaries)} summaries to file {file_name} for user {oh_user.oh_id}")
+    upload_summaries(oh_user, summaries, file_name, existing_file_id)
 
 
 def remove_unwanted_fields(summaries):
@@ -77,12 +76,9 @@ def remove_fields(summaries, fields_to_remove):
                 del summary[field]
 
 
-def upload_summaries(oh_user, summaries, file_name, month, existing_file_id):
-    fn = write_json_data_to_tmp_file(f'garmin-health-api-{file_name}-{month}.json', summaries)
-    api.upload_aws(fn, create_metadata(file_name, month),
-                   oh_user.get_access_token(),
-                   project_member_id=oh_user.oh_id,
-                   max_bytes=MAX_FILE_BYTES)
+def upload_summaries(oh_user, summaries, file_name, existing_file_id):
+    fn = write_json_data_to_tmp_file(f'garmin-health-api-{file_name}.json', summaries)
+    api.upload_aws(fn, create_metadata(file_name), oh_user.get_access_token(), project_member_id=oh_user.oh_id, max_bytes=MAX_FILE_BYTES)
     if existing_file_id:
         api.delete_file(oh_user.get_access_token(), file_id=existing_file_id)
 
@@ -97,10 +93,10 @@ def get_oh_user_from_garmin_id(garmin_user_id):
     return garmin_member.member
 
 
-def create_metadata(summary_name, month_name):
+def create_metadata(file_name):
     return {
-        'description': f'Garmin Health API data {summary_name} {month_name}',
-        'tags': [GARMIN_HEALTH_API_TAG, summary_name, month_name],
+        'description': f'Garmin Health API data {file_name}',
+        'tags': [GARMIN_HEALTH_API_TAG, file_name],
         'updated_at': str(datetime.utcnow()),
     }
 
@@ -144,3 +140,15 @@ def extract_summaries(request_body, summary_name):
     if len(other_keys) > 0:
         logging.warning(f'Found ignored keys {other_keys} in summary file')
     return summaries
+
+
+def summaries_to_process_key(summaries_to_process):
+    return f"{summaries_to_process.garmin_user_id}_{summaries_to_process.file_name}"
+
+
+def remove_all_oh_data_files_for_user(garmin_user_id):
+    oh_user = get_oh_user_from_garmin_id(garmin_user_id)
+    oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
+    for file in oh_user_data['data']:
+        _LOGGER.info(f"Removing file {file}")
+        api.delete_file(oh_user.get_access_token(), file_id=file['id'])

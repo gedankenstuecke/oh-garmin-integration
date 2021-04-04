@@ -8,10 +8,9 @@ django = "*"
 django-open-humans = "*"
 django-heroku = "*"
 gunicorn = "*"
+requests-oauthlib = "*"
 celery = "*"
 redis = "*"
-pandas = "*"
-requests-oauthlib = "*"
 
 [requires]
 python_version = "3.8"
