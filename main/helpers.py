@@ -29,10 +29,6 @@ def write_json_data_to_tmp_file(filename, json_data):
     return full_path
 
 
-def download_json_data(download_url):
-    return json.loads(requests.get(download_url).content)
-
-
 def find_existing_data_file(oh_user_data, file_name):
     for file in oh_user_data['data']:
         tags = file['metadata']['tags']
@@ -53,16 +49,20 @@ def merge_summaries(new_summaries, old_summaries):
     return result
 
 
-def merge_with_existing_and_upload(oh_user, oh_user_data, summaries, file_name):
+def merge_with_existing_and_upload(oh_user, summaries, file_name):
+    access_token = oh_user.get_access_token()
+    oh_user_data = api.exchange_oauth2_member(access_token)
     existing_file = find_existing_data_file(oh_user_data, file_name)
     if existing_file:
         download_url = existing_file['download_url']
-        old_summaries = download_json_data(download_url)
+        old_summaries = json.loads(requests.get(download_url).content)
         summaries = merge_summaries(summaries, old_summaries)
     existing_file_id = existing_file['id'] if existing_file else None
 
     _LOGGER.info(f"Uploading {len(summaries)} summaries to file {file_name} for user {oh_user.oh_id}")
     upload_summaries(oh_user, summaries, file_name, existing_file_id)
+
+    return summaries
 
 
 def remove_unwanted_fields(summaries):

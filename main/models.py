@@ -22,3 +22,16 @@ class SummariesToProcess(models.Model):
     summaries_json = models.TextField()
     garmin_user_id = models.CharField(max_length=255, null=False)
     file_name = models.CharField(max_length=255, null=False)
+
+
+class RetrievedData(models.Model):
+    id = models.IntegerField(primary_key=True, auto_created=True)
+    member = models.ForeignKey(OpenHumansMember, on_delete=models.CASCADE)
+    data_type = models.CharField(max_length=255, null=False)
+    min_date = models.DateTimeField(null=False)
+    max_date = models.DateTimeField(null=False)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['member', 'data_type']),
+        ]

@@ -5,7 +5,7 @@ import time
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import logout
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -15,7 +15,7 @@ from django.views.decorators.http import require_http_methods
 from openhumans.models import OpenHumansMember
 
 from .garmin_health import GarminHealth
-from .models import GarminMember
+from .models import GarminMember, RetrievedData
 from .tasks import handle_summaries_delayed
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,8 +31,11 @@ def index(request):
         context['auth_url'] = auth_url
     except ImproperlyConfigured as e:
         messages.info(request, mark_safe(f'<b>Received an error ${e}. You might to set up your ".env" file?</b>'))
-    if request.user.is_authenticated and request.user.openhumansmember.garmin_member:
+    if request.user.is_authenticated and request.user.openhumansmember.garmin_member and request.user.openhumansmember.garmin_member.userid:
         context['is_garmin_member'] = True
+        retrieved_data = RetrievedData.objects.filter(member=request.user.openhumansmember)
+        context['retrieved_data'] = retrieved_data
+        context['has_data'] = len(retrieved_data) > 0
 
     return render(request, 'main/index.html', context=context)
 
@@ -103,10 +106,12 @@ def garmin_user_permissions_change(request):
     for user_permissions_change in data['userPermissionsChange']:
         user_id = user_permissions_change['userId']
         permissions = user_permissions_change['permissions']
-        garmin_member = GarminMember.objects.get(userid=user_id)
-        garmin_member.has_health_export_permission = 'HEALTH_EXPORT' in permissions
-        garmin_member.save()
-
+        try:
+            garmin_member = GarminMember.objects.get(userid=user_id)
+            garmin_member.has_health_export_permission = 'HEALTH_EXPORT' in permissions
+            garmin_member.save()
+        except ObjectDoesNotExist:
+            _LOGGER.info("Ignoring permission change for unknown user " + user_id)
     return HttpResponse(status=200)
 
 

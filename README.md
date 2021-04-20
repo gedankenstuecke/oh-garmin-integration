@@ -45,4 +45,6 @@ curl -v https://www.bagofwords.be/garmin-endpoint/dailies/ --data '{"dailies":[]
 
 9. Other useful commands:
 
-pipenv run python manage.py makemigrations pipenv run python manage.py migrate
+pipenv run python manage.py makemigrations 
+
+pipenv run python manage.py migrate

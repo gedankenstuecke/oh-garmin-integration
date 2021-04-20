@@ -8,13 +8,17 @@ from threading import Lock, Thread
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
-from ohapi import api
 from requests_oauthlib import OAuth1Session
 
 from oh_template.settings import NUM_OF_SUMMARY_UPLOAD_THREADS
 from .consts import BACKFILL_SECONDS, BACKFILL_MIN_YEAR, GARMIN_BACKFILL_URLS, BACKFILL_SLEEP_BETWEEN_CALLS
-from .helpers import unix_time_seconds, merge_with_existing_and_upload, get_oh_user_from_garmin_id, group_summaries_per_user_and_per_month, extract_summaries, remove_fields, summaries_to_process_key
-from .models import GarminMember, SummariesToProcess
+from .helpers import unix_time_seconds, merge_with_existing_and_upload, get_oh_user_from_garmin_id, group_summaries_per_user_and_per_month, extract_summaries, remove_fields, summaries_to_process_key, \
+    remove_unwanted_fields, extract_timestamp
+from .models import GarminMember, SummariesToProcess, RetrievedData
+
+import pytz
+
+utc = pytz.UTC
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,7 +38,7 @@ def start_threads():
 def handle_backfill():
     while True:
         try:
-            garmin_member = GarminMember.objects.get(was_backfilled=False)
+            garmin_member = GarminMember.objects.get(was_backfilled=False, userid__isnull=False)
             handle_backfill_for_member(garmin_member)
         except ObjectDoesNotExist:
             # Nothing to do
@@ -61,9 +65,12 @@ def handle_backfill_for_member(garmin_member):
             res = oauth.get(url=summary_url)
             if res.status_code != 202:
                 _LOGGER.error(f"Invalid response for backfill url {summary_url}, got response response: {res.content},{res.status_code}")
+                # Failed to call all backfill's !!
+                # We'll stop executing them for this user, in the next run of the handle_backfill thread,
+                # this function will be called again for this user, since garmin_member.was_backfilled is still False
                 return
             else:
-                _LOGGER.debug(f"Called backfill {summary_url}")
+                _LOGGER.info(f"Called backfill {summary_url}")
 
         time.sleep(BACKFILL_SLEEP_BETWEEN_CALLS)
         end_date = start_date
@@ -97,6 +104,24 @@ def handle_summaries():
             time.sleep(0.5)
 
 
+def update_retrieved_data_log(oh_user, summaries, file_name):
+    if len(summaries) == 0:
+        return  # Nothing to do
+    data_type = "-".join(file_name.split("-")[:-2])
+    min_timestamp = min(map(lambda summary: extract_timestamp(summary).timestamp(), summaries))
+    max_timestamp = max(map(lambda summary: extract_timestamp(summary).timestamp(), summaries))
+    min_date = utc.localize(datetime.fromtimestamp(min_timestamp))
+    max_date = utc.localize(datetime.fromtimestamp(max_timestamp))
+    with handle_summaries_lock:
+        try:
+            retrieved_data = RetrievedData.objects.get(member=oh_user, data_type=data_type)
+            retrieved_data.min_date = min_date if min_date < retrieved_data.min_date else retrieved_data.min_date
+            retrieved_data.max_date = max_date if max_date > retrieved_data.max_date else retrieved_data.max_date
+        except ObjectDoesNotExist:
+            retrieved_data = RetrievedData(member=oh_user, data_type=data_type, min_date=min_date, max_date=max_date)
+        retrieved_data.save()
+
+
 def process_summaries_for_user_and_file(file_name, garmin_user_id):
     summaries_to_process_all = SummariesToProcess.objects.filter(garmin_user_id__exact=garmin_user_id, file_name__exact=file_name)
     summaries = []
@@ -107,11 +132,10 @@ def process_summaries_for_user_and_file(file_name, garmin_user_id):
 
     try:
         oh_user = get_oh_user_from_garmin_id(garmin_user_id)
-        access_token = oh_user.get_access_token()
-        oh_user_data = api.exchange_oauth2_member(access_token)
-        merge_with_existing_and_upload(oh_user, oh_user_data, summaries, file_name)
+        all_summaries = merge_with_existing_and_upload(oh_user, summaries, file_name)
+        update_retrieved_data_log(oh_user, all_summaries, file_name)
         SummariesToProcess.objects.filter(id__in=ids_to_delete).delete()
-        _LOGGER.info(f"Handling {len(summaries_to_process_all)} summaries for garmin_user_id={garmin_user_id}, file_name={file_name}")
+        _LOGGER.info(f"Saved {len(all_summaries)} summaries for garmin_user_id={garmin_user_id}, file_name={file_name}")
 
     except:
         e = sys.exc_info()[0]
@@ -127,14 +151,11 @@ def handle_summaries_delayed(body, summaries_name, data_type, fields_to_remove=N
     summaries = extract_summaries(body, summaries_name)
     if fields_to_remove is not None:
         remove_fields(summaries, fields_to_remove)
-    schedule_delayed_handling_of_summaries(summaries, data_type)
-
-
-def schedule_delayed_handling_of_summaries(summaries, data_type):
     grouped_summaries = group_summaries_per_user_and_per_month(summaries)
     for garmin_user_id, monthly_summaries in grouped_summaries.items():
         for year_month, summaries in monthly_summaries.items():
             file_name = f"{data_type}-{year_month}"
+            remove_unwanted_fields(summaries)
             save_summaries_for_delayed_processing(file_name, garmin_user_id, summaries)
 
 
