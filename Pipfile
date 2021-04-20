@@ -11,6 +11,7 @@ gunicorn = "*"
 requests-oauthlib = "*"
 celery = "*"
 redis = "*"
+dj-database-url = "*"
 
 [requires]
 python_version = "3.8"

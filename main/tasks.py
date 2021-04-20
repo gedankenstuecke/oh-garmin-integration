@@ -27,11 +27,11 @@ locked_summaries = []
 
 
 def start_threads():
-    backfill_thread = Thread(target=handle_backfill)
+    backfill_thread = Thread(target=handle_backfill, daemon=True)
     backfill_thread.start()
 
     for i in range(NUM_OF_SUMMARY_UPLOAD_THREADS):
-        thread = Thread(target=handle_summaries)
+        thread = Thread(target=handle_summaries, daemon=True)
         thread.start()
 
 

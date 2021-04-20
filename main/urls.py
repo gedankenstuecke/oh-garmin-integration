@@ -8,7 +8,6 @@ urlpatterns = [
     path('', views.index, name='index'),
     path('logout/?', views.logout_user, name='logout'),
     path('about/?', views.about, name='about'),
-    path('about/?', views.about, name='about'),
 
     path('garmin/authorize/', authorize_garmin, name='authorize-garmin'),
     path('garmin/complete/<str:resource_owner_secret>/', complete_garmin, name='authorize-garmin'),
