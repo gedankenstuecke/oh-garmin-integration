@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -80,24 +81,33 @@ def handle_backfill_for_member(garmin_member):
 
 
 def handle_summaries():
+    thread_id = threading.get_ident()
     while True:
         not_locked_summaries = None
         with handle_summaries_lock:
+            _LOGGER.info(f"THREADING {thread_id} obtained lock")
             for summaries_to_process in SummariesToProcess.objects.all():
                 if summaries_to_process_key(summaries_to_process) not in locked_summaries:
                     not_locked_summaries = summaries_to_process
                     break
 
             if not_locked_summaries is not None:
-                locked_summaries.append(summaries_to_process_key(not_locked_summaries))
+                key = summaries_to_process_key(not_locked_summaries)
+                _LOGGER.info(f"THREADING {thread_id} got summaries to process " + key)
+                locked_summaries.append(key)
+            else:
+                _LOGGER.info(f"THREADING {thread_id} got not summaries to process")
+
+            _LOGGER.info(f"THREADING {thread_id} released lock")
+
+        _LOGGER.info(f"THREADING {thread_id} locked summaries is now {locked_summaries}")
 
         if not_locked_summaries is not None:
             try:
-                garmin_user_id = not_locked_summaries.garmin_user_id
-                file_name = not_locked_summaries.file_name
-                process_summaries_for_user_and_file(file_name, garmin_user_id)
+                process_summaries_for_user_and_file(not_locked_summaries.file_name, not_locked_summaries.garmin_user_id)
             finally:
                 locked_summaries.remove(summaries_to_process_key(not_locked_summaries))
+                _LOGGER.info(f"THREADING {thread_id} finished processing {summaries_to_process_key(not_locked_summaries)}")
 
         else:
             # Nothing to do
