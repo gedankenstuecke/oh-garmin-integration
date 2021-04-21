@@ -26,7 +26,7 @@ def write_json_data_to_tmp_file(filename, json_data):
     with open(full_path, 'w') as json_file:
         json_file.write(json.dumps(json_data))
         json_file.flush()
-    return full_path
+    return tmp_dir, full_path
 
 
 def find_existing_data_file(oh_user_data, file_name):
@@ -77,10 +77,12 @@ def remove_fields(summaries, fields_to_remove):
 
 
 def upload_summaries(oh_user, summaries, file_name, existing_file_id):
-    fn = write_json_data_to_tmp_file(f'garmin-health-api-{file_name}.json', summaries)
-    api.upload_aws(fn, create_metadata(file_name), oh_user.get_access_token(), project_member_id=oh_user.oh_id, max_bytes=MAX_FILE_BYTES)
+    temp_dir, file = write_json_data_to_tmp_file(f'garmin-health-api-{file_name}.json', summaries)
+    api.upload_aws(file, create_metadata(file_name), oh_user.get_access_token(), project_member_id=oh_user.oh_id, max_bytes=MAX_FILE_BYTES)
     if existing_file_id:
         api.delete_file(oh_user.get_access_token(), file_id=existing_file_id)
+    os.remove(file)
+    os.rmdir(temp_dir)
 
 
 def get_django_user_id_from_garmin_id(garmin_user_id):
