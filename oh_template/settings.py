@@ -172,3 +172,6 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Allow POST body's of 20mb
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20971520
