@@ -81,7 +81,7 @@ def handle_backfill_for_member(garmin_member):
 
 
 def handle_summaries():
-    thread_id = threading.get_ident()
+    thread_id = threading.get_native_id()
     while True:
         not_locked_summaries = None
         with handle_summaries_lock:
@@ -96,7 +96,7 @@ def handle_summaries():
                 _LOGGER.info(f"THREADING {thread_id} got summaries to process " + key)
                 locked_summaries.append(key)
             else:
-                _LOGGER.info(f"THREADING {thread_id} got not summaries to process")
+                _LOGGER.info(f"THREADING {thread_id} got no summaries to process")
 
             _LOGGER.info(f"THREADING {thread_id} released lock")
 
