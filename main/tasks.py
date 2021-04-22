@@ -81,7 +81,8 @@ def handle_backfill_for_member(garmin_member):
             else:
                 _LOGGER.info(f"Called backfill {summary_url}")
 
-        time.sleep(BACKFILL_SLEEP_BETWEEN_CALLS)
+            time.sleep(BACKFILL_SLEEP_BETWEEN_CALLS)
+
         end_date = start_date
         start_date = start_date - timedelta(seconds=BACKFILL_SECONDS)
     garmin_member.was_backfilled = True
