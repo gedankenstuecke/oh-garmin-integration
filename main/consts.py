@@ -4,7 +4,7 @@ GARMIN_HEALTH_API_TAG = 'garmin-health-api'
 
 BACKFILL_MIN_YEAR = 2015  # that's when the smart watches with tracking capabilities came out
 BACKFILL_SECONDS = 7776000  # Maximum allowed by the API
-BACKFILL_SLEEP_BETWEEN_CALLS = 2
+BACKFILL_SLEEP_BETWEEN_CALLS = 10
 
 GARMIN_BACKFILL_URLS = [
     'https://healthapi.garmin.com/wellness-api/rest/backfill/dailies',
