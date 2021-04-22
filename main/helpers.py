@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import tempfile
-import threading
 from collections import defaultdict
 from datetime import datetime
 
@@ -60,7 +59,7 @@ def merge_with_existing_and_upload(oh_user, summaries, file_name):
         summaries = merge_summaries(summaries, old_summaries)
     existing_file_id = existing_file['id'] if existing_file else None
 
-    _LOGGER.info(f"THREADING {threading.get_native_id()} Uploading {len(summaries)} summaries to file {file_name} for user {oh_user.oh_id}")
+    _LOGGER.info(f"Uploading {len(summaries)} summaries to file {file_name} for user {oh_user.oh_id}")
     upload_summaries(oh_user, summaries, file_name, existing_file_id)
 
     return summaries

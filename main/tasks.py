@@ -2,12 +2,12 @@ import json
 import logging
 import signal
 import sys
-import threading
 import time
 import traceback
 from datetime import datetime, timedelta
 from threading import Lock, Thread
 
+import pytz
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from requests_oauthlib import OAuth1Session
@@ -17,8 +17,6 @@ from .consts import BACKFILL_SECONDS, BACKFILL_MIN_YEAR, GARMIN_BACKFILL_URLS, B
 from .helpers import unix_time_seconds, merge_with_existing_and_upload, get_oh_user_from_garmin_id, group_summaries_per_user_and_per_month, extract_summaries, remove_fields, summaries_to_process_key, \
     remove_unwanted_fields, extract_timestamp
 from .models import GarminMember, SummariesToProcess, RetrievedData
-
-import pytz
 
 utc = pytz.UTC
 
@@ -91,11 +89,9 @@ def handle_backfill_for_member(garmin_member):
 
 
 def handle_summaries():
-    thread_id = threading.get_native_id()
     while not process_terminated:
         not_locked_summaries = None
         with handle_summaries_lock:
-            _LOGGER.info(f"THREADING {thread_id} obtained lock")
             for summaries_to_process in SummariesToProcess.objects.all():
                 if summaries_to_process_key(summaries_to_process) not in locked_summaries:
                     not_locked_summaries = summaries_to_process
@@ -103,21 +99,13 @@ def handle_summaries():
 
             if not_locked_summaries is not None:
                 key = summaries_to_process_key(not_locked_summaries)
-                _LOGGER.info(f"THREADING {thread_id} got summaries to process " + key)
                 locked_summaries.append(key)
-            else:
-                _LOGGER.info(f"THREADING {thread_id} got no summaries to process")
-
-            _LOGGER.info(f"THREADING {thread_id} released lock")
-
-        _LOGGER.info(f"THREADING {thread_id} locked summaries is now {locked_summaries}")
 
         if not_locked_summaries is not None:
             try:
                 process_summaries_for_user_and_file(not_locked_summaries.file_name, not_locked_summaries.garmin_user_id)
             finally:
                 locked_summaries.remove(summaries_to_process_key(not_locked_summaries))
-                _LOGGER.info(f"THREADING {thread_id} finished processing {summaries_to_process_key(not_locked_summaries)}")
 
         else:
             # Nothing to do
