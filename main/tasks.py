@@ -169,7 +169,7 @@ def handle_summaries_delayed(body, summaries_name, data_type, fields_to_remove=N
 
 
 def save_summaries_for_delayed_processing(file_name, garmin_user_id, summaries):
-    _LOGGER.info(f"Saving summaries {file_name} for user {garmin_user_id} for further processing")
+    _LOGGER.info(f"Saving {len(summaries)} summaries {file_name} for user {garmin_user_id} for further processing")
     summaries_to_process = SummariesToProcess()
     summaries_to_process.summaries_json = json.dumps(summaries)
     summaries_to_process.garmin_user_id = garmin_user_id
