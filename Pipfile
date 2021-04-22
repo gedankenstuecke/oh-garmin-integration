@@ -12,6 +12,7 @@ requests-oauthlib = "*"
 celery = "*"
 redis = "*"
 dj-database-url = "*"
+python-dotenv = "*"
 
 [requires]
 python_version = "3.8"

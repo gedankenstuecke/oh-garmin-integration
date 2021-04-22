@@ -1,5 +1,6 @@
 import json
 import logging
+import signal
 import sys
 import threading
 import time
@@ -25,19 +26,28 @@ _LOGGER = logging.getLogger(__name__)
 
 handle_summaries_lock = Lock()
 locked_summaries = []
+process_terminated = False
+
+
+def terminate_process(signum, frame):
+    global process_terminated
+    process_terminated = True
 
 
 def start_threads():
-    backfill_thread = Thread(target=handle_backfill, daemon=True)
+    signal.signal(signal.SIGINT, terminate_process)
+    signal.signal(signal.SIGTERM, terminate_process)
+
+    backfill_thread = Thread(target=handle_backfill)
     backfill_thread.start()
 
     for i in range(NUM_OF_SUMMARY_UPLOAD_THREADS):
-        thread = Thread(target=handle_summaries, daemon=True)
+        thread = Thread(target=handle_summaries)
         thread.start()
 
 
 def handle_backfill():
-    while True:
+    while not process_terminated:
         try:
             garmin_member = GarminMember.objects.get(was_backfilled=False, userid__isnull=False)
             handle_backfill_for_member(garmin_member)
@@ -82,7 +92,7 @@ def handle_backfill_for_member(garmin_member):
 
 def handle_summaries():
     thread_id = threading.get_native_id()
-    while True:
+    while not process_terminated:
         not_locked_summaries = None
         with handle_summaries_lock:
             _LOGGER.info(f"THREADING {thread_id} obtained lock")
