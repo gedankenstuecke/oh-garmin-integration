@@ -154,3 +154,28 @@ def remove_all_oh_data_files_for_user(garmin_user_id):
     for file in oh_user_data['data']:
         _LOGGER.info(f"Removing file {file}")
         api.delete_file(oh_user.get_access_token(), file_id=file['id'])
+
+
+def download_all_oh_data_files_for_user(garmin_user_id):
+    oh_user = get_oh_user_from_garmin_id(garmin_user_id)
+    oh_user_data = api.exchange_oauth2_member(oh_user.get_access_token())
+    tmp_dir = tempfile.mkdtemp()
+    _LOGGER.info(f"Downloading all summaries to {tmp_dir}")
+    summary_ids = []
+    for file in oh_user_data['data']:
+        _LOGGER.info(f"Downloading file {file['basename']}")
+        download_url = file['download_url']
+        summaries = json.loads(requests.get(download_url).content)
+        for summary in summaries:
+            summary_ids.append(f"{file['basename']}_{summary['summaryId']}")
+        full_path = os.path.join(tmp_dir, file['basename'])
+        with open(full_path, 'w') as json_file:
+            json_file.write(json.dumps(summaries))
+            json_file.flush()
+    summary_ids.sort()
+    with open(os.path.join(tmp_dir, 'ids.txt'), 'w') as ids_files:
+        for summary_id in summary_ids:
+            ids_files.write(summary_id)
+            ids_files.write('\n')
+
+    _LOGGER.info(f"Finished. Downloaded all summaries to {tmp_dir}")

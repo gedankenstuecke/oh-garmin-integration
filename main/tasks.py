@@ -158,6 +158,8 @@ def process_summaries_for_user_and_file(file_name, garmin_user_id):
 def handle_summaries_delayed(body, summaries_name, data_type, fields_to_remove=None):
     body = body.decode('utf-8')
     summaries = extract_summaries(body, summaries_name)
+    for summary in summaries:
+        _LOGGER.info(f"Received {summary['summaryId']} {data_type}")
     if fields_to_remove is not None:
         remove_fields(summaries, fields_to_remove)
     grouped_summaries = group_summaries_per_user_and_per_month(summaries)
