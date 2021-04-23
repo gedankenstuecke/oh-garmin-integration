@@ -57,6 +57,8 @@ def merge_with_existing_and_upload(oh_user, summaries, file_name):
         download_url = existing_file['download_url']
         old_summaries = json.loads(requests.get(download_url).content)
         summaries = merge_summaries(summaries, old_summaries)
+    else:
+        summaries = merge_summaries(summaries, [])  # Remove duplicates
     existing_file_id = existing_file['id'] if existing_file else None
 
     _LOGGER.info(f"Uploading {len(summaries)} summaries to file {file_name} for user {oh_user.oh_id}")
@@ -170,7 +172,7 @@ def download_all_oh_data_files_for_user(garmin_user_id):
             summary_ids.append(f"{file['basename']}_{summary['summaryId']}")
         full_path = os.path.join(tmp_dir, file['basename'])
         with open(full_path, 'w') as json_file:
-            json_file.write(json.dumps(summaries))
+            json_file.write(json.dumps(summaries, indent=4))
             json_file.flush()
     summary_ids.sort()
     with open(os.path.join(tmp_dir, 'ids.txt'), 'w') as ids_files:

@@ -32,7 +32,7 @@ def terminate_process(signum, frame):
     process_terminated = True
 
 
-def start_threads():
+def start_worker_threads():
     signal.signal(signal.SIGINT, terminate_process)
     signal.signal(signal.SIGTERM, terminate_process)
 
@@ -63,7 +63,7 @@ def handle_backfill_for_member(garmin_member):
     )
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(seconds=BACKFILL_SECONDS)
-    _LOGGER.info(f"Executing backfill for user ${get_oh_user_from_garmin_id(garmin_member.userid)}")
+    _LOGGER.info(f"Executing backfill for user {get_oh_user_from_garmin_id(garmin_member.userid)}")
     while start_date.year >= BACKFILL_MIN_YEAR:
 
         start_epoch = unix_time_seconds(start_date)
@@ -87,6 +87,7 @@ def handle_backfill_for_member(garmin_member):
         start_date = start_date - timedelta(seconds=BACKFILL_SECONDS)
     garmin_member.was_backfilled = True
     garmin_member.save()
+    _LOGGER.info(f"Backfill finished for user {get_oh_user_from_garmin_id(garmin_member.userid)}")
 
 
 def handle_summaries():

@@ -9,6 +9,6 @@ class Command(BaseCommand):
 
         load_dotenv()
 
-        from main.tasks import start_threads
+        from main.worker import start_worker_threads
 
-        start_threads()
+        start_worker_threads()
