@@ -70,6 +70,8 @@ def handle_backfill_for_member(garmin_member):
         end_epoch = unix_time_seconds(end_date)
 
         for url in GARMIN_BACKFILL_URLS:
+            if process_terminated:
+                return  # Terminate this thread
             summary_url = f"{url}?summaryStartTimeInSeconds={start_epoch}&summaryEndTimeInSeconds={end_epoch}"
             res = oauth.get(url=summary_url)
             if res.status_code != 202:
