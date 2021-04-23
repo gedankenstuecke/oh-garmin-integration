@@ -150,7 +150,7 @@ OPENHUMANS_APP_BASE_URL = os.environ['OPENHUMANS_APP_BASE_URL']
 GARMIN_KEY = os.environ['GARMIN_KEY']
 GARMIN_SECRET = os.environ['GARMIN_SECRET']
 
-NUM_OF_SUMMARY_UPLOAD_THREADS = 5
+NUM_OF_SUMMARY_UPLOAD_THREADS = int(os.environ['NUM_OF_SUMMARY_UPLOAD_THREADS'])
 
 # Redirect after login (via Open Humans member account) or logout.
 LOGIN_REDIRECT_URL = '/'
