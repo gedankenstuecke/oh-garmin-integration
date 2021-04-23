@@ -63,9 +63,8 @@ def complete_garmin(request, resource_owner_secret):
         # Not authorized. If we already have a garmin_member for this user we remove it
         try:
             garmin_member = GarminMember.objects.get(member=request.user.openhumansmember)
-            request.user.openhumansmember.garmin_member = None
-            request.user.openhumansmember.save()
-            garmin_member.delete()
+            garmin_member.has_health_export_permission = False
+            garmin_member.save()
         except ObjectDoesNotExist:
             pass  # Ok
     else:
@@ -86,6 +85,7 @@ def complete_garmin(request, resource_owner_secret):
         garmin_member.userid = garmin_user_id
         garmin_member.member = request.user.openhumansmember
         garmin_member.was_backfilled = False
+        garmin_member.has_health_export_permission = True
         garmin_member.save()
 
     return redirect('/')
@@ -103,6 +103,7 @@ def authorize_garmin(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_deregistrations(request):
+    # This method is not yet implemented because it's unclear at this time how it can be triggered...
     tmp_file = f"/tmp/garmin_deregistrations_{time.time()}"
     f = open(tmp_file, "ab")
     f.write(request.body)
@@ -186,7 +187,7 @@ def garmin_stress(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_third_party_dailies(request):
-    handle_summaries_delayed(request.body, 'thirdPartyDetails', "third-party")  # I (Koen) could not test this since I don't have this data... TODO!
+    handle_summaries_delayed(request.body, 'thirdPartyDetails', "third-party")  # I (Koen) could not test this since I don't have this data...
 
     return HttpResponse(status=200)
 

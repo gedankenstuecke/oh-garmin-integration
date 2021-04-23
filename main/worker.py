@@ -47,7 +47,7 @@ def start_worker_threads():
 def handle_backfill():
     while not process_terminated:
         try:
-            garmin_member = GarminMember.objects.get(was_backfilled=False, userid__isnull=False)
+            garmin_member = GarminMember.objects.get(was_backfilled=False, userid__isnull=False, has_health_export_permission=True)
             handle_backfill_for_member(garmin_member)
         except ObjectDoesNotExist:
             # Nothing to do
@@ -75,8 +75,12 @@ def handle_backfill_for_member(garmin_member):
             if res.status_code != 202:
                 _LOGGER.error(f"Invalid response for backfill url {summary_url}, got response response: {res.content},{res.status_code}")
                 # Failed to call all backfill's !!
+                if res.status_code == 403:
+                    # Something is wrong with the user authorisation token. He might have removed the authorization...
+                    garmin_member.has_health_export_permission = False
+                    garmin_member.save()
                 # We'll stop executing them for this user, in the next run of the handle_backfill thread,
-                # this function will be called again for this user, since garmin_member.was_backfilled is still False
+                # this function will be called again for this user (if it's authorized), since was_backfilled is still False
                 return
             else:
                 _LOGGER.info(f"Called backfill {summary_url}")
