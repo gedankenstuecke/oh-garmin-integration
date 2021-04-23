@@ -31,7 +31,7 @@ def index(request):
         context['auth_url'] = auth_url
     except ImproperlyConfigured as e:
         messages.info(request, mark_safe(f'<b>Received an error {e}. You might to set up your ".env" file?</b>'))
-    if request.user.is_authenticated and request.user.openhumansmember.garmin_member and request.user.openhumansmember.garmin_member.userid:
+    if request.user.is_authenticated and hasattr(request.user.openhumansmember, 'garmin_member') and request.user.openhumansmember.garmin_member.userid:
         context['is_garmin_member'] = True
         retrieved_data = RetrievedData.objects.filter(member=request.user.openhumansmember)
         context['retrieved_data'] = retrieved_data
@@ -58,23 +58,35 @@ def logout_user(request):
 
 
 def complete_garmin(request, resource_owner_secret):
-    authorization_response = settings.OPENHUMANS_APP_BASE_URL + request.get_full_path()
-    garmin = GarminHealth(settings.GARMIN_KEY, settings.GARMIN_SECRET)
-    garmin.complete_garmin(authorization_response, resource_owner_secret)
-    access_token = garmin.uat
-    garmin_user_id = garmin.api_id
-
-    if hasattr(request.user.openhumansmember, 'garmin_member'):
-        garmin_member = request.user.openhumansmember.garmin_member
+    oauth_verifier = request.GET.get('oauth_verifier', None)
+    if oauth_verifier == 'null' or oauth_verifier is None:
+        # Not authorized. If we already have a garmin_member for this user we remove it
+        try:
+            garmin_member = GarminMember.objects.get(member=request.user.openhumansmember)
+            request.user.openhumansmember.garmin_member = None
+            request.user.openhumansmember.save()
+            garmin_member.delete()
+        except ObjectDoesNotExist:
+            pass  # Ok
     else:
-        garmin_member = GarminMember()
+        # Authorized
+        authorization_response = settings.OPENHUMANS_APP_BASE_URL + request.get_full_path()
+        garmin = GarminHealth(settings.GARMIN_KEY, settings.GARMIN_SECRET)
+        garmin.complete_garmin(authorization_response, resource_owner_secret)
+        access_token = garmin.uat
+        garmin_user_id = garmin.api_id
 
-    garmin_member.access_token = access_token
-    garmin_member.access_token_secret = garmin.oauth.token.get('oauth_token_secret')
-    garmin_member.userid = garmin_user_id
-    garmin_member.member = request.user.openhumansmember
-    garmin_member.was_backfilled = False
-    garmin_member.save()
+        if hasattr(request.user.openhumansmember, 'garmin_member'):
+            garmin_member = request.user.openhumansmember.garmin_member
+        else:
+            garmin_member = GarminMember()
+
+        garmin_member.access_token = access_token
+        garmin_member.access_token_secret = garmin.oauth.token.get('oauth_token_secret')
+        garmin_member.userid = garmin_user_id
+        garmin_member.member = request.user.openhumansmember
+        garmin_member.was_backfilled = False
+        garmin_member.save()
 
     return redirect('/')
 
