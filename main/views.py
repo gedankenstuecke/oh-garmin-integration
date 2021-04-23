@@ -16,7 +16,7 @@ from openhumans.models import OpenHumansMember
 
 from .garmin_health import GarminHealth
 from .models import GarminMember, RetrievedData
-from .tasks import handle_summaries_delayed
+from .worker import handle_summaries_delayed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def index(request):
         auth_url = OpenHumansMember.get_auth_url()
         context['auth_url'] = auth_url
     except ImproperlyConfigured as e:
-        messages.info(request, mark_safe(f'<b>Received an error ${e}. You might to set up your ".env" file?</b>'))
+        messages.info(request, mark_safe(f'<b>Received an error {e}. You might to set up your ".env" file?</b>'))
     if request.user.is_authenticated and request.user.openhumansmember.garmin_member and request.user.openhumansmember.garmin_member.userid:
         context['is_garmin_member'] = True
         retrieved_data = RetrievedData.objects.filter(member=request.user.openhumansmember)
