@@ -15,6 +15,7 @@ from django.views.decorators.http import require_http_methods
 from openhumans.models import OpenHumansMember
 
 from .garmin_health import GarminHealth
+from .helpers import remove_all_oh_data_files_for_user
 from .models import GarminMember, RetrievedData
 from .worker import handle_summaries_delayed
 
@@ -36,6 +37,8 @@ def index(request):
         retrieved_data = RetrievedData.objects.filter(member=request.user.openhumansmember)
         context['retrieved_data'] = retrieved_data
         context['has_data'] = len(retrieved_data) > 0
+
+    remove_all_oh_data_files_for_user('4d866463-8368-41d0-8b8a-07595717ab91')
 
     return render(request, 'main/index.html', context=context)
 
@@ -103,12 +106,9 @@ def authorize_garmin(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def garmin_deregistrations(request):
-    # This method is not yet implemented because it's unclear at this time how it can be triggered...
-    tmp_file = f"/tmp/garmin_deregistrations_{time.time()}"
-    f = open(tmp_file, "ab")
-    f.write(request.body)
-    f.close()
-    print(f"Saved garmin_deregistrations to {tmp_file}")
+    # Not necessary to do something here currently...
+
+    return HttpResponse(status=200)
 
 
 @csrf_exempt
